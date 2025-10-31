@@ -1,9 +1,10 @@
+from unittest import mock
 from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from django.test import TestCase
-
-from wagtail.admin.filters import FilteredModelChoiceField
+from django.test import TestCase, override_settings
+from wagtail.admin.filters import FilteredModelChoiceField, WagtailFilterSet
+from wagtail.models import Page
 from wagtail.test.utils import WagtailTestUtils
 
 User = get_user_model()
@@ -98,3 +99,132 @@ class TestFilteredModelChoiceField(WagtailTestUtils, TestCase):
             morten_username=self.morten.get_username(),
         )
         self.assertHTMLEqual(html, expected_html)
+
+
+class TestWagtailFilterSetAddLocaleFilter(WagtailTestUtils, TestCase):
+    def test_model_none_does_not_add_filter(self):
+        class TestFilterSet(WagtailFilterSet):
+            class Meta:
+                model = None
+                fields = []
+
+        with override_settings(WAGTAIL_I18N_ENABLED=True):
+            filterset = TestFilterSet()
+        
+        self.assertNotIn("locale", filterset.filters)
+
+    def test_model_not_translatable_does_not_add_filter(self):
+        
+        class TestFilterSet(WagtailFilterSet):
+            class Meta:
+                model = User
+                fields = []
+
+        with override_settings(WAGTAIL_I18N_ENABLED=True):
+            filterset = TestFilterSet()
+        
+        self.assertNotIn("locale", filterset.filters)
+
+    @override_settings(
+        WAGTAIL_I18N_ENABLED=True,
+        WAGTAIL_CONTENT_LANGUAGES=[
+            ("en", "English"),
+            ("pt", "Portuguese"),
+        ],
+    )
+    def test_locale_filter_already_exists_not_overwritten(self):
+        from wagtail.admin.filters import LocaleFilter
+        from wagtail.models import Locale
+        
+        Locale.objects.get_or_create(language_code="en")
+        Locale.objects.get_or_create(language_code="pt")
+        
+        class TestFilterSet(WagtailFilterSet):
+            locale = LocaleFilter(label="Custom Label")
+            
+            class Meta:
+                model = Page
+                fields = ["locale"]
+
+        filterset = TestFilterSet()
+        
+        # Verificar que mantém o filtro customizado
+        self.assertIn("locale", filterset.filters)
+        self.assertEqual(filterset.filters["locale"].label, "Custom Label")
+
+    @override_settings(
+        WAGTAIL_I18N_ENABLED=True,
+        WAGTAIL_CONTENT_LANGUAGES=[("en", "English")],
+    )
+    def test_single_language_does_not_add_filter(self):
+        from wagtail.models import Locale
+        
+        Locale.objects.get_or_create(language_code="en")
+        
+        class TestFilterSet(WagtailFilterSet):
+            class Meta:
+                model = Page
+                fields = []
+
+        filterset = TestFilterSet()
+
+        self.assertNotIn("locale", filterset.filters)
+
+    @override_settings(
+        WAGTAIL_I18N_ENABLED=True,
+        WAGTAIL_CONTENT_LANGUAGES=[],
+    )
+    def test_no_languages_does_not_add_filter(self):
+        class TestFilterSet(WagtailFilterSet):
+            class Meta:
+                model = Page
+                fields = []
+
+        filterset = TestFilterSet()
+        
+        self.assertNotIn("locale", filterset.filters)
+
+    @override_settings(
+        WAGTAIL_I18N_ENABLED=True,
+        WAGTAIL_CONTENT_LANGUAGES=[
+            ("en", "English"),
+            ("pt", "Portuguese"),
+            ("fr", "French"),
+        ],
+    )
+    def test_multiple_languages_adds_locale_filter(self):
+        from wagtail.admin.filters import LocaleFilter
+        from wagtail.models import Locale
+        
+        Locale.objects.get_or_create(language_code="en")
+        Locale.objects.get_or_create(language_code="pt")
+        Locale.objects.get_or_create(language_code="fr")
+        
+        class TestFilterSet(WagtailFilterSet):
+            class Meta:
+                model = Page
+                fields = []
+
+        filterset = TestFilterSet()
+        
+        self.assertIn("locale", filterset.filters)
+        self.assertIsInstance(filterset.filters["locale"], LocaleFilter)
+        
+        choices = filterset.filters["locale"].extra["choices"]
+        self.assertGreaterEqual(len(choices), 2)
+
+    @override_settings(WAGTAIL_I18N_ENABLED=False)
+    def test_i18n_disabled_does_not_call_method(self):
+        from wagtail.models import Locale
+        
+        Locale.objects.get_or_create(language_code="en")
+        Locale.objects.get_or_create(language_code="pt")
+        
+        class TestFilterSet(WagtailFilterSet):
+            class Meta:
+                model = Page
+                fields = []
+
+        filterset = TestFilterSet()
+
+        self.assertNotIn("locale", filterset.filters)
